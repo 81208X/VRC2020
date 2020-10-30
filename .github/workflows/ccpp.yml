@@ -1,0 +1,56 @@
+name: C/C++ CI
+
+on: [push]
+
+env:
+  TOOLCHAIN: "gcc-arm-none-eabi-9-2020-q2-update"
+  TOOLCHAIN_URL: "https://developer.arm.com/-/media/Files/downloads/gnu-rm/9-2020q2/gcc-arm-none-eabi-9-2020-q2-update-x86_64-linux.tar.bz2?revision=05382cca-1721-44e1-ae19-1e7c3dc96118&la=en&hash=D7C9D18FCA2DD9F894FD9F3C3DC9228498FA281A"
+  XZ_OPT: -9
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: 'recursive'
+
+    - name: "Toolchain cache"
+      uses: actions/cache@v1.1.2
+      id: toochain-cache
+      with:
+        path: toolchain/
+        key: toolchain-${{ env.TOOLCHAIN }}
+
+    - name: "Download toolchain"
+      if: steps.toochain-cache.outputs.cache-hit != 'true'
+      run: wget -O "/tmp/toolchain.tar.bz2" -nv "$TOOLCHAIN_URL"
+
+    - name: "Extract toolchain"
+      if: steps.toochain-cache.outputs.cache-hit != 'true'
+      run: mkdir "toolchain/" && tar xjf "/tmp/toolchain.tar.bz2" -C "toolchain/"
+
+    - name: "Make"
+      run: PATH=$PATH$( find "./toolchain/" -type d -printf ":%p" ) make all EXTRA_CXXFLAGS=" -DAUTOMATED_BUILD"
+
+    - name: "Compress binaries"
+      run: tar cfJ /tmp/artifact.tar.xz bin/*.elf bin/*.bin
+
+    - uses: actions/upload-artifact@v1
+      name: "Upload binaries"
+      with:
+        name: "bin.tar.xz"
+        path: /tmp/artifact.tar.xz
+
+    - uses: actions/setup-ruby@v1
+    - name: "Send Discord notification"
+      if: always()
+      env:
+        JOB_STATUS: ${{ job.status }}
+        WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        HOOK_OS_NAME: ${{ runner.os }}
+        WORKFLOW_NAME: ${{ github.workflow }}
+      run: |
+        git clone https://github.com/DiscordHooks/github-actions-discord-webhook.git webhook
+        bash webhook/send.sh $JOB_STATUS $WEBHOOK_URL
+      shell: bash
